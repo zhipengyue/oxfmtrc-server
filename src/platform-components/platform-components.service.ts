@@ -342,18 +342,26 @@ export class PlatformComponentsService {
         where: { role: UserRole.PLATFORM_ADMIN },
         order: { createdAt: 'ASC' },
       });
+      const toSave: PlatformComponent[] = [];
       for (const row of orphans) {
+        let changed = false;
         if (!row.ownerUserId) {
-          row.ownerUserId = admin?.id ?? row.ownerScope;
+          // ownerScope 可能是 tenant-{uuid}，不能写入 ownerUserId（用户 UUID）
+          if (admin?.id) {
+            row.ownerUserId = admin.id;
+            changed = true;
+          }
         }
         if (row.status === 'published' && !row.visibility) {
           row.visibility = 'official';
           if (!row.publisherDisplayName) {
             row.publisherDisplayName = '官方';
           }
+          changed = true;
         }
+        if (changed) toSave.push(row);
       }
-      await this.repo.save(orphans);
+      if (toSave.length) await this.repo.save(toSave);
     } finally {
       this.backfillRunning = false;
     }
