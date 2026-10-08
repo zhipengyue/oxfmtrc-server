@@ -15,9 +15,10 @@ const PAGE_REF_KEYS = new Set([
   'navigatePageId',
   'linkPageId',
   'openPageId',
+  'invalidPageId',
 ]);
 
-const REQUEST_REF_KEYS = new Set(['pageDataSourceId', 'dataSourceId']);
+const REQUEST_REF_KEYS = new Set(['pageDataSourceId', 'dataSourceId', 'loginRequestId']);
 
 const CUSTOM_COMPONENT_REF_KEYS = new Set(['customComponentId']);
 

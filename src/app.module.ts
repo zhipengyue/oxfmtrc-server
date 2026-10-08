@@ -10,11 +10,21 @@ import { HttpRequestsModule } from './http-requests/http-requests.module';
 import { LowcodeApp } from './lowcode/lowcode-app.entity';
 import { LowcodePage } from './lowcode/lowcode-page.entity';
 import { LowcodeAppsModule } from './lowcode/lowcode-apps.module';
+import { PreviewTicket } from './lowcode/preview-ticket.entity';
+import { ProjectRuntimeSecret } from './lowcode/project-runtime-secret.entity';
+import { ProjectRuntimeSetting } from './lowcode/project-runtime-setting.entity';
 import { MaterialCategoriesModule } from './material-categories/material-categories.module';
 import { MaterialCategory } from './material-categories/material-category.entity';
-import { MockapiModule } from './mockapi/mockapi.module';
 import { StorageModule } from './storage/storage.module';
 import { User } from './users/user.entity';
+import { Tenant } from './tenants/tenant.entity';
+import { OrganizationModule } from './tenants/organization.module';
+import { PlatformComponentsModule } from './platform-components/platform-components.module';
+import { PlatformComponent } from './platform-components/platform-component.entity';
+import { PlatformComponentCategory } from './platform-components/platform-component-category.entity';
+import { ProjectShare } from './lowcode/project-share.entity';
+import { AuditLog } from './audit/audit-log.entity';
+import { AuditModule } from './audit/audit.module';
 
 @Module({
   imports: [
@@ -31,24 +41,34 @@ import { User } from './users/user.entity';
         database: config.get<string>('DB_DATABASE', 'oxfmtrc'),
         entities: [
           User,
+          Tenant,
+          PlatformComponent,
+          PlatformComponentCategory,
           LowcodeApp,
           LowcodePage,
           Category,
           MaterialCategory,
           RefreshToken,
           AppHttpRequest,
+          PreviewTicket,
+          ProjectRuntimeSecret,
+          ProjectRuntimeSetting,
+          ProjectShare,
+          AuditLog,
         ],
         synchronize: process.env.NODE_ENV !== 'production',
         logging: process.env.DB_LOGGING === 'true',
       }),
     }),
     AuthModule,
+    AuditModule,
     LowcodeAppsModule,
     CategoriesModule,
-    MockapiModule,
     HttpRequestsModule,
     StorageModule,
     MaterialCategoriesModule,
+    OrganizationModule,
+    PlatformComponentsModule,
   ],
 })
 export class AppModule {}

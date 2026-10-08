@@ -4,7 +4,10 @@ import {
   WsMode,
 } from './http-request.enums';
 
-/** 新建/首次打开请求列表时自动写入的预置 WebSocket 请求（大屏设备采集） */
+/**
+ * 历史预置：曾在新建应用时自动写入。
+ * 现已停用，仅保留模板供文档/手动复用；ensureDefaultRequests 会清理同名同地址遗留项。
+ */
 export const DEFAULT_WEBSOCKET_DEVICE_STREAM = {
   name: '设备采集数据',
   address: '/mockapi/ws/device-stream',
@@ -28,4 +31,7 @@ export const DEFAULT_WEBSOCKET_DEVICE_STREAM = {
   configText: '',
 } as const;
 
-export const DEFAULT_APP_HTTP_REQUESTS = [DEFAULT_WEBSOCKET_DEVICE_STREAM];
+/** 新建应用不再自动写入任何预置请求 */
+export const DEFAULT_APP_HTTP_REQUESTS: ReadonlyArray<
+  typeof DEFAULT_WEBSOCKET_DEVICE_STREAM
+> = [];

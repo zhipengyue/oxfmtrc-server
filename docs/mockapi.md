@@ -3,11 +3,58 @@
 前缀 **`/mockapi`**，**无需登录**，用于低代码编辑器 HTTP / WebSocket 数据源、表格与大屏组件联调。
 
 Base URL（经 Vite 代理）：`http://localhost:5173/mockapi/...`  
-直连后端：`http://127.0.0.1:3005/mockapi/...`
+直连独立 Mock 服务：`http://127.0.0.1:3006/mockapi/...`
+
+服务代码位于仓库根目录 `mock-server`，启动方式：
+
+```bash
+cd mock-server
+pnpm install
+pnpm start
+```
+
+## POST /mockapi/transactions
+
+按时间范围返回财务交易模拟数据，响应体为可直接绑定循环组件的数组。
+
+请求体：
+
+```json
+{ "type": "Weekly" }
+```
+
+`type` 可选值为 `Daily`、`Weekly`、`Monthly`；其他值返回 400。
+
+## GET /mockapi/notifications?page=1&pageSize=5
+
+通知列表分页接口，默认每页 5 条、共 35 条，适合移动端 List 下拉刷新和触底加载调试。
+
+### Query
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `page` | number | 1 | 页码 |
+| `pageSize` | number | 5 | 每页条数，最大 100 |
+
+响应结构：
+
+```json
+{
+  "list": [{ "id": 1, "section": "Today", "title": "Reminder!", "description": "...", "detail": "", "timeText": "17:00 - April 24", "icon": "bell", "iconColor": "#00cfa6", "accentColor": "#3478ff" }],
+  "page": 1,
+  "pageSize": 5,
+  "total": 35,
+  "totalPages": 7,
+  "hasMore": true,
+  "finished": false
+}
+```
+
+最后一页返回 `finished: true`；超出总页数后返回空 `list`。
 
 WebSocket（经 Vite 需开启 `ws: true`）：  
 `ws://localhost:5173/mockapi/ws/device-stream`  
-或 `ws://127.0.0.1:3005/mockapi/ws/device-stream`
+或 `ws://127.0.0.1:3006/mockapi/ws/device-stream`
 
 ---
 
@@ -210,5 +257,6 @@ ws://localhost:5173/mockapi/ws/device-stream
 
 | 日期 | 说明 |
 |------|------|
+| 2026-09-05 | GET /mockapi/notifications 支持 pageSize，模拟数据增至 35 条 |
 | 2026-06-25 | 新增设备采集 WebSocket、GET /mockapi/devices |
 | 2026-05-26 | 首版：分页表格、全量表格 |

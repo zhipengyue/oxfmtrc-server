@@ -1,19 +1,21 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import type { SignOptions } from 'jsonwebtoken';
 import { UsersModule } from '../users/users.module';
+import { AuditModule } from '../audit/audit.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
 import { RefreshToken } from './refresh-token.entity';
+import { Tenant } from '../tenants/tenant.entity';
 
 @Module({
   imports: [
     UsersModule,
-    TypeOrmModule.forFeature([RefreshToken]),
+    TypeOrmModule.forFeature([RefreshToken, Tenant]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       global: true,
@@ -28,6 +30,7 @@ import { RefreshToken } from './refresh-token.entity';
         };
       },
     }),
+    forwardRef(() => AuditModule),
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],

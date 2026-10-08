@@ -119,27 +119,15 @@ Base：`/api/v1/apps/{appId}/http-requests`，需 **Bearer Token**，且仅能�
 
 | 日期 | 说明 |
 |------|------|
-| 2026-06-26 | 新建应用 / 首次打开列表时自动写入预置 WebSocket「设备采集数据」 |
+| 2026-09-20 | 取消新建应用自动写入「设备采集数据」；打开列表时清理历史遗留同名 mock 请求 |
+| 2026-06-26 | 新建应用 / 首次打开列表时自动写入预置 WebSocket「设备采集数据」（已废弃） |
 | 2026-06-25 | 同一应用下 `name` 唯一；新增 `status` |
 | 2026-05-26 | 首版：列表、详情、新增、更新、删除 |
 
 ---
 
-## 预置 WebSocket 请求
+## 预置请求（已停用）
 
-每个应用会自动维护一条 **设备采集数据**（名称唯一，已存在则跳过）：
+新建应用**不再**自动写入任何数据请求。若项目里仍有历史自动注入的「设备采集数据」（地址 `/mockapi/ws/device-stream`），打开数据管理列表时会自动清理。
 
-```json
-{
-  "name": "设备采集数据",
-  "address": "/mockapi/ws/device-stream",
-  "type": "websocket",
-  "wsMode": "receive",
-  "status": "enabled",
-  "frequencyMs": 2000,
-  "paramsFn": "() => ({ action: 'subscribe', deviceIds: ['dev-001','dev-002','dev-003'], metrics: ['temperature','humidity','status'], intervalMs: 2000 })",
-  "responseFn": "(res) => { if (res && res.type === 'telemetry') return res.devices; return res }"
-}
-```
-
-对应 Mock WebSocket：`docs/mockapi.md`
+需要设备采集演示时，可手动新增 WebSocket，参见 `docs/mockapi.md`。

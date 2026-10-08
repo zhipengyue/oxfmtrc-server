@@ -16,6 +16,11 @@ import {
 } from '../storage/storage-path.util';
 import { CreateMaterialCategoryDto } from './dto/create-material-category.dto';
 import { MaterialCategory } from './material-category.entity';
+import { AccessScopeService } from '../tenants/access-scope.service';
+import { In } from 'typeorm';
+import { AuditService } from '../audit/audit.service';
+import { AuditResource } from '../audit/audit-resource.enum';
+import { AuditType } from '../audit/audit-type.enum';
 
 export interface MaterialCategoryItem {
   id: string;
@@ -34,11 +39,14 @@ export class MaterialCategoriesService {
     @InjectRepository(MaterialCategory)
     private readonly categoryRepo: Repository<MaterialCategory>,
     private readonly minio: MinioService,
+    private readonly accessScope: AccessScopeService,
+    private readonly audit: AuditService,
   ) {}
 
   async list(user: AuthPayload): Promise<MaterialCategoryItem[]> {
+    const scope = this.accessScope.resourceOwnerKey(user);
     const rows = await this.categoryRepo.find({
-      where: { ownerAccount: user.phone },
+      where: { ownerAccount: In(scope === user.phone ? [scope] : [scope, user.phone]) },
       order: { createdAt: 'ASC' },
     });
     return Promise.all(rows.map((row) => this.toItem(row)));
@@ -51,33 +59,53 @@ export class MaterialCategoriesService {
     this.ensureMinioReady();
 
     const name = dto.name.trim();
+    const scope = this.accessScope.resourceOwnerKey(user);
     const dupName = await this.categoryRepo.findOne({
-      where: { ownerAccount: user.phone, name },
+      where: { ownerAccount: scope, name },
     });
     if (dupName) {
       throw new ConflictException('该素材分类名称已存在');
     }
 
-    const slug = await this.ensureUniqueSlug(user.phone, slugifyMaterialCategory(name));
-    const prefix = materialCategoryPrefix(user.phone, slug);
+    const slug = await this.ensureUniqueSlug(scope, slugifyMaterialCategory(name));
+    const prefix = materialCategoryPrefix(scope, slug);
 
     await this.minio.ensureDirectory(prefix);
 
     const row = this.categoryRepo.create({
-      ownerAccount: user.phone,
+      ownerAccount: scope,
       name,
       slug,
     });
     const saved = await this.categoryRepo.save(row);
+    this.audit.record({
+      user,
+      type: AuditType.SAVE,
+      resource: AuditResource.MATERIAL,
+      action: 'create_material_category',
+      targetId: saved.id,
+      targetName: saved.name,
+      summary: `创建素材分类「${saved.name}」`,
+    });
     return this.toItem(saved);
   }
 
   async remove(id: string, user: AuthPayload): Promise<void> {
     this.ensureMinioReady();
     const row = await this.findOwnedOrThrow(id, user);
-    const prefix = materialCategoryPrefix(user.phone, row.slug);
+    const name = row.name;
+    const prefix = materialCategoryPrefix(row.ownerAccount, row.slug);
     await this.minio.removeObjectsByPrefix(prefix);
     await this.categoryRepo.remove(row);
+    this.audit.record({
+      user,
+      type: AuditType.DELETE,
+      resource: AuditResource.MATERIAL,
+      action: 'delete_material_category',
+      targetId: id,
+      targetName: name,
+      summary: `删除素材分类「${name}」`,
+    });
   }
 
   async resolveFolderByCategoryId(
@@ -96,7 +124,8 @@ export class MaterialCategoriesService {
     if (!row) {
       throw new NotFoundException('素材分类不存在');
     }
-    if (row.ownerAccount !== user.phone) {
+    const scope = this.accessScope.resourceOwnerKey(user);
+    if (row.ownerAccount !== scope && row.ownerAccount !== user.phone) {
       throw new ForbiddenException('无权操作该素材分类');
     }
     return row;

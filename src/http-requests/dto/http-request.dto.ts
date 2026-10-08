@@ -1,5 +1,6 @@
 import {
   IsEnum,
+  IsBoolean,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -16,7 +17,7 @@ import {
   WsMode,
 } from '../http-request.enums';
 
-const DEFAULT_RESPONSE_FN = '(res) => { return res.data }';
+const DEFAULT_RESPONSE_FN = '(res) => res';
 
 export class CreateHttpRequestDto {
   @IsString()
@@ -49,6 +50,9 @@ export class CreateHttpRequestDto {
   @IsInt()
   @Min(0)
   frequencyMs: number;
+
+  @IsBoolean()
+  autoRequest: boolean;
 
   /** 启用 enabled / 禁用 disabled；不传时默认 enabled */
   @IsOptional()

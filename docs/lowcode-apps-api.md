@@ -172,6 +172,16 @@ Base URL 前缀：`/api/v1/apps`。认证：`Authorization: Bearer <access_token
 
 ---
 
+## DELETE /api/v1/apps/{appId}
+
+**删除应用**（同时删除其下全部页面与 HTTP 请求配置）
+
+- **成功 204**：无响应体
+- **404**：应用不存在
+- **403**：无权访问
+
+---
+
 ## GET /api/v1/apps/{appId}/pages/{pageId}
 
 **页面详情**
@@ -354,6 +364,18 @@ Base URL 前缀：`/api/v1/apps`。认证：`Authorization: Bearer <access_token
 
 ---
 
+## PUT /api/v1/apps/{appId}/cover
+
+编辑器保存应用时自动提交当前画布的 JPEG/PNG/WebP 截图。请求体：
+
+```json
+{ "coverDataUrl": "data:image/jpeg;base64,..." }
+```
+
+封面最大 1,000,000 字符；应用列表的 `coverUrl` 字段会返回该封面。
+
+---
+
 ## 数据表
 
 | 表名 | 说明 |
@@ -363,11 +385,29 @@ Base URL 前缀：`/api/v1/apps`。认证：`Authorization: Bearer <access_token
 
 ---
 
+## ANY /api/v1/runtime-proxy/{appId}/{path}
+
+**在线发布应用的项目级反向代理**
+
+服务端读取 `project_runtime_settings` 中该项目的代理规则，按最长路径前缀匹配后转发。编辑预览、真机预览、未发布项目和在线发布项目均可使用，无需为客户接口修改前端 `vite.config.ts`。
+
+例如项目配置 `path: /mockapi`、`target: https://api.example.com` 后：
+
+```text
+/api/v1/runtime-proxy/app-123/mockapi/transactions?page=2
+```
+
+会转发到目标服务。生产环境默认禁止本机、内网及链路本地目标；如平台确需访问私网网关，由运维显式设置 `RUNTIME_PROXY_ALLOW_PRIVATE_TARGETS=true`。
+
+---
+
 ## 变更记录
 
 | 日期 | 说明 |
 |------|------|
 | 2026-05-26 | 新增：保存页面 detail（PUT .../detail） |
+| 2026-08-19 | 新增：删除应用 `DELETE /api/v1/apps/{appId}` |
+| 2026-09-18 | 新增：保存应用自动截图封面 `PUT /api/v1/apps/{appId}/cover` |
 | 2026-05-26 | 新增：页面新增/重命名/删除/拖拽排序 |
 | 2026-05-26 | 新增：创建应用、应用详情（页面列表）、页面详情 |
 | 2026-05-07 | 首版：列表、草稿详情 |

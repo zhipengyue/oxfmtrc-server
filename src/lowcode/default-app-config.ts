@@ -38,6 +38,7 @@ export function buildDefaultDraftConfig(input: {
       '--primary-color': '#409eff',
       '--text-color': '#303133',
     },
+    splash: { enabled: false, pageId: '', targetPageId: '', minDurationMs: 800 },
     i18n: {
       defaultLocale: 'zh-CN',
       messages: {

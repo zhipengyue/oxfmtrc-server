@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString, Length, Matches } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, Length, Matches } from 'class-validator';
 
 /** 中国大陆手机号 */
 const CN_PHONE = /^1[3-9]\d{9}$/;
@@ -12,4 +12,8 @@ export class RegisterPersonalDto {
   @IsString()
   @Length(6, 64, { message: '密码长度为 6–64 位' })
   password: string;
+
+  @IsOptional()
+  @IsString()
+  avatarUrl?: string;
 }

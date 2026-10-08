@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -17,12 +18,22 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { AuditResource } from '../audit/audit-resource.enum';
 import { AuditType } from '../audit/audit-type.enum';
+import { PlatformComponentCategory } from './platform-component-category.entity';
+import {
+  collapseMarketToLatestVersions,
+  findPublishFamilyHead,
+  nextPatchVersion,
+  sameComponentSource,
+  sortComponentVersions,
+} from './component-versions.util';
 
 @Injectable()
 export class PlatformComponentsService {
   constructor(
     @InjectRepository(PlatformComponent)
     private readonly repo: Repository<PlatformComponent>,
+    @InjectRepository(PlatformComponentCategory)
+    private readonly categoryRepo: Repository<PlatformComponentCategory>,
     @InjectRepository(User)
     private readonly users: Repository<User>,
     private readonly scope: AccessScopeService,
@@ -59,13 +70,24 @@ export class PlatformComponentsService {
       throw new BadRequestException('已发布组件请先下架再编辑');
     }
 
+    const nextName = String(body.name ?? '').trim().slice(0, 100);
+    const duplicate = await this.repo
+      .createQueryBuilder('c')
+      .where('c.ownerUserId = :ownerUserId', { ownerUserId: user.sub })
+      .andWhere('LOWER(TRIM(c.name)) = LOWER(TRIM(:name))', { name: nextName })
+      // 官方已发布组件允许创建同名草稿，用于发布新版本；普通自定义组件不允许重名。
+      .andWhere("NOT (c.status = 'published' AND c.visibility = 'official')")
+      .andWhere('c.id <> :id', { id: row?.id ?? '' })
+      .getOne();
+    if (duplicate) throw new ConflictException('你账号下已经存在同名自定义组件');
+
     const isCreate = !row;
     row = this.repo.create({
       ...(row ?? {}),
       ownerScope,
       ownerUserId: user.sub,
       platform: body.platform === 'mobile' ? 'mobile' : 'web',
-      name: String(body.name ?? '').trim().slice(0, 100),
+      name: nextName,
       description: String(body.description ?? '').trim().slice(0, 300),
       tags: Array.isArray(body.tags) ? body.tags.map(String).slice(0, 20) : [],
       template: String(body.template ?? ''),
@@ -74,6 +96,10 @@ export class PlatformComponentsService {
       status: 'unpublished',
       visibility: null,
       coverDataUrl: body.coverDataUrl || row?.coverDataUrl || null,
+      layoutTemplate:
+        body.layoutTemplate && typeof body.layoutTemplate === 'object'
+          ? body.layoutTemplate
+          : row?.layoutTemplate ?? null,
       sourceMarketplaceId: row?.sourceMarketplaceId ?? null,
       publisherDisplayName: null,
       publisherCompanyName: null,
@@ -95,12 +121,29 @@ export class PlatformComponentsService {
     user: AuthPayload,
     id: string,
     visibility: PlatformComponentVisibility,
+    categoryId?: string,
   ): Promise<PlatformComponent> {
     this.assertCanPublish(user, visibility);
     const row = await this.ownedDraft(user, id);
+    const siblings = await this.repo.find({
+      where: { status: 'published', visibility, platform: row.platform },
+    });
+    const head = findPublishFamilyHead(siblings, row, visibility);
+    if (head && sameComponentSource(head, row)) {
+      throw new BadRequestException('该组件已在组件市场中，请修改后再发布新版本');
+    }
     const publisher = await this.users.findOne({ where: { id: user.sub } });
     row.status = 'published';
     row.visibility = visibility;
+    row.familyId = head?.familyId || head?.id || row.familyId || row.id;
+    row.version = head ? nextPatchVersion(head.version) : row.version || '1.0.0';
+    if (visibility === 'official') {
+      const category = categoryId
+        ? await this.categoryRepo.findOne({ where: { id: categoryId } })
+        : await this.ensureDefaultCategory();
+      if (!category) throw new BadRequestException('官方组件分类不存在');
+      row.officialCategoryId = category.id;
+    } else row.officialCategoryId = null;
     row.publisherDisplayName =
       (publisher?.displayName || '').trim() || publisher?.phone || user.phone;
     row.publisherCompanyName =
@@ -135,6 +178,7 @@ export class PlatformComponentsService {
     if (!can) throw new ForbiddenException('无权下架该组件');
     row.status = 'unpublished';
     row.visibility = null;
+    row.officialCategoryId = null;
     row.publisherDisplayName = null;
     row.publisherCompanyName = null;
     row.ownerUserId = row.ownerUserId || user.sub;
@@ -150,6 +194,37 @@ export class PlatformComponentsService {
       summary: `下架组件「${saved.name}」`,
     });
     return saved;
+  }
+
+  async listWithdrawn(user: AuthPayload) {
+    const where = user.role === UserRole.PLATFORM_ADMIN ? { status: 'withdrawn' as const } : { status: 'withdrawn' as const, ownerUserId: user.sub };
+    return this.repo.find({ where, order: { withdrawnAt: 'DESC', updatedAt: 'DESC' } });
+  }
+
+  async withdraw(user: AuthPayload, id: string, reason?: string) {
+    const text = String(reason ?? '').trim();
+    if (!text) throw new BadRequestException('请填写下架原因');
+    if (text.length > 500) throw new BadRequestException('下架原因不能超过500字');
+    const row = await this.repo.findOne({ where: { id, status: 'published' } });
+    if (!row) throw new NotFoundException('组件不存在或已下架');
+    if (row.ownerUserId !== user.sub && user.role !== UserRole.PLATFORM_ADMIN) throw new ForbiddenException('无权下架该组件');
+    row.status = 'withdrawn'; row.withdrawalReason = text; row.withdrawnAt = new Date();
+    return this.repo.save(row);
+  }
+
+  async restore(user: AuthPayload, id: string) {
+    const row = await this.repo.findOne({ where: { id, status: 'withdrawn' } });
+    if (!row) throw new NotFoundException('已下架组件不存在');
+    if (row.ownerUserId !== user.sub && user.role !== UserRole.PLATFORM_ADMIN) throw new ForbiddenException('无权恢复该组件');
+    row.status = 'published'; row.withdrawalReason = null; row.withdrawnAt = null;
+    return this.repo.save(row);
+  }
+
+  async deleteWithdrawn(user: AuthPayload, id: string) {
+    const row = await this.repo.findOne({ where: { id, status: 'withdrawn' } });
+    if (!row) throw new NotFoundException('已下架组件不存在');
+    if (row.ownerUserId !== user.sub && user.role !== UserRole.PLATFORM_ADMIN) throw new ForbiddenException('无权删除该组件');
+    await this.repo.remove(row);
   }
 
   /** 兼容旧 PATCH status */
@@ -173,7 +248,8 @@ export class PlatformComponentsService {
 
   async listMarket(user: AuthPayload): Promise<PlatformComponent[]> {
     await this.backfillMissingOwners();
-    return this.marketQuery(user).orderBy('c.updatedAt', 'DESC').getMany();
+    const rows = await this.marketQuery(user).orderBy('c.updatedAt', 'DESC').getMany();
+    return collapseMarketToLatestVersions(rows);
   }
 
   async listMarketScope(
@@ -185,6 +261,8 @@ export class PlatformComponentsService {
     const raw = String(scope ?? '').trim();
     if (raw === 'official') {
       qb.andWhere('c.visibility = :v', { v: 'official' });
+    } else if (raw.startsWith('official-category-')) {
+      qb.andWhere('c.visibility = :v', { v: 'official' }).andWhere('c.officialCategoryId = :categoryId', { categoryId: raw.slice('official-category-'.length) });
     } else if (raw === 'tenant') {
       qb.andWhere('c.visibility = :v', { v: 'tenant' });
     } else if (raw === 'marketplace') {
@@ -200,7 +278,28 @@ export class PlatformComponentsService {
         }),
       );
     }
-    return qb.orderBy('c.updatedAt', 'DESC').getMany();
+    return collapseMarketToLatestVersions(await qb.orderBy('c.updatedAt', 'DESC').getMany());
+  }
+
+  async listMarketVersions(user: AuthPayload, id: string): Promise<PlatformComponent[]> {
+    await this.backfillMissingOwners();
+    const target = await this.repo.findOne({ where: { id, status: 'published' } });
+    if (!target || !(await this.canViewMarketItem(user, target))) {
+      throw new NotFoundException('组件不存在');
+    }
+    const rows = await this.marketQuery(user).getMany();
+    const familyId = target.familyId || target.id;
+    return sortComponentVersions(
+      rows.filter(
+        (item) =>
+          item.familyId === familyId ||
+          item.id === familyId ||
+          (item.visibility === target.visibility &&
+            item.platform === target.platform &&
+            item.name.trim() === target.name.trim() &&
+            (item.visibility === 'official' || item.ownerUserId === target.ownerUserId)),
+      ),
+    );
   }
 
   async useFromMarket(user: AuthPayload, id: string): Promise<PlatformComponent> {
@@ -221,9 +320,12 @@ export class PlatformComponentsService {
       status: 'unpublished',
       visibility: null,
       coverDataUrl: source.coverDataUrl,
+      layoutTemplate: source.layoutTemplate,
       publisherDisplayName: null,
       publisherCompanyName: null,
       sourceMarketplaceId: source.id,
+      familyId: null,
+      version: null,
     });
     const saved = await this.repo.save(copy);
     this.audit.record({
@@ -301,6 +403,58 @@ export class PlatformComponentsService {
     }
   }
 
+  async listOfficialCategories() {
+    await this.ensureDefaultCategory();
+    await this.ensureEchartsCategory();
+    return this.categoryRepo.find({ order: { sortOrder: 'ASC', createdAt: 'ASC' } });
+  }
+
+  async createOfficialCategory(user: AuthPayload, rawName?: string) {
+    this.assertPlatformAdmin(user);
+    const name = String(rawName ?? '').trim().slice(0, 80);
+    if (!name) throw new BadRequestException('分类名称不能为空');
+    if (await this.categoryRepo.findOne({ where: { name } })) throw new BadRequestException('分类名称已存在');
+    return this.categoryRepo.save(this.categoryRepo.create({ name, sortOrder: 0, isDefault: false }));
+  }
+
+  async updateOfficialCategory(user: AuthPayload, id: string, rawName?: string) {
+    this.assertPlatformAdmin(user);
+    const row = await this.categoryRepo.findOne({ where: { id } });
+    if (!row) throw new NotFoundException('分类不存在');
+    const name = String(rawName ?? '').trim().slice(0, 80);
+    if (!name) throw new BadRequestException('分类名称不能为空');
+    row.name = name;
+    return this.categoryRepo.save(row);
+  }
+
+  async removeOfficialCategory(user: AuthPayload, id: string) {
+    this.assertPlatformAdmin(user);
+    const row = await this.categoryRepo.findOne({ where: { id } });
+    if (!row) throw new NotFoundException('分类不存在');
+    if (row.isDefault) throw new BadRequestException('默认分类不能删除');
+    const fallback = await this.ensureDefaultCategory();
+    await this.repo.update({ officialCategoryId: id }, { officialCategoryId: fallback.id });
+    await this.categoryRepo.remove(row);
+  }
+
+  private assertPlatformAdmin(user: AuthPayload) {
+    if (user.role !== UserRole.PLATFORM_ADMIN) throw new ForbiddenException('仅平台管理员可管理官方分类');
+  }
+
+  private async ensureDefaultCategory() {
+    let row = await this.categoryRepo.findOne({ where: { isDefault: true } });
+    if (!row) row = await this.categoryRepo.save(this.categoryRepo.create({ name: '默认分类', sortOrder: -1000, isDefault: true }));
+    return row;
+  }
+
+  private async ensureEchartsCategory() {
+    const existing = await this.categoryRepo.findOne({ where: { name: 'ECharts 图表' } });
+    if (existing) return existing;
+    return this.categoryRepo.save(
+      this.categoryRepo.create({ name: 'ECharts 图表', sortOrder: 0, isDefault: false }),
+    );
+  }
+
   private async ownedDraft(user: AuthPayload, id: string) {
     let row = await this.repo.findOne({
       where: { id, ownerUserId: user.sub, status: 'unpublished' },
@@ -335,6 +489,9 @@ export class PlatformComponentsService {
         .orWhere('(c.status = :published AND c.visibility IS NULL)', {
           published: 'published',
         })
+        .orWhere('(c.status = :published AND c.visibility = :official AND c.officialCategoryId IS NULL)', {
+          published: 'published', official: 'official',
+        })
         .take(200)
         .getMany();
       if (!orphans.length) return;
@@ -357,6 +514,15 @@ export class PlatformComponentsService {
           if (!row.publisherDisplayName) {
             row.publisherDisplayName = '官方';
           }
+          changed = true;
+        }
+        if (row.status === 'published' && row.visibility === 'official' && !row.officialCategoryId) {
+          row.officialCategoryId = (await this.ensureDefaultCategory()).id;
+          changed = true;
+        }
+        if (row.status === 'published' && !row.familyId) {
+          row.familyId = row.id;
+          row.version = row.version || '1.0.0';
           changed = true;
         }
         if (changed) toSave.push(row);

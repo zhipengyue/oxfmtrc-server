@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -14,6 +15,11 @@ import { CreatePageDto, RenamePageDto, ReorderPagesDto, SavePageDetailDto } from
 import { LowcodeApp } from './lowcode-app.entity';
 import { LowcodePage } from './lowcode-page.entity';
 import type { AppPageListItem, PageDetailResponse } from './lowcode-apps.service';
+import { ProjectAccessService } from '../tenants/project-access.service';
+import { AuditService } from '../audit/audit.service';
+import { AuditResource } from '../audit/audit-resource.enum';
+import { AuditType } from '../audit/audit-type.enum';
+import { CollabEventsService } from './collab-events.service';
 
 @Injectable()
 export class LowcodePagesService {
@@ -22,6 +28,9 @@ export class LowcodePagesService {
     private readonly appRepo: Repository<LowcodeApp>,
     @InjectRepository(LowcodePage)
     private readonly pageRepo: Repository<LowcodePage>,
+    private readonly projectAccess: ProjectAccessService,
+    private readonly audit: AuditService,
+    private readonly collabEvents: CollabEventsService,
   ) {}
 
   async createPage(
@@ -45,6 +54,16 @@ export class LowcodePagesService {
     await this.pageRepo.save(page);
     await this.syncDraft(app);
 
+    this.audit.record({
+      user,
+      type: AuditType.SAVE,
+      resource: AuditResource.PAGE,
+      action: 'create_page',
+      targetId: page.id,
+      targetName: page.name,
+      summary: `创建页面「${page.name}」（应用 ${appId}）`,
+    });
+
     return this.toPageItem(page);
   }
 
@@ -59,6 +78,15 @@ export class LowcodePagesService {
     page.name = dto.name.trim();
     await this.pageRepo.save(page);
     await this.syncDraft(app);
+    this.audit.record({
+      user,
+      type: AuditType.SAVE,
+      resource: AuditResource.PAGE,
+      action: 'rename_page',
+      targetId: page.id,
+      targetName: page.name,
+      summary: `重命名页面为「${page.name}」（应用 ${appId}）`,
+    });
     return this.toPageItem(page);
   }
 
@@ -70,10 +98,41 @@ export class LowcodePagesService {
   ): Promise<PageDetailResponse> {
     const app = await this.findOwnedAppOrThrow(appId, user);
     const page = await this.findPageOrThrow(appId, pageId);
+    const currentRevision = Number(page.revision ?? 0);
+    const force = dto.force === true;
+    const hasBase = dto.baseRevision != null && Number.isFinite(Number(dto.baseRevision));
+    if (!force && hasBase && Number(dto.baseRevision) !== currentRevision) {
+      throw new ConflictException({
+        code: 'PAGE_VERSION_CONFLICT',
+        message: '页面已被他人更新，请先处理冲突',
+        page: this.toPageDetail(app, page),
+      });
+    }
+
     page.detail = dto.detail;
+    page.revision = currentRevision + 1;
     await this.pageRepo.save(page);
     await this.syncDraft(app);
-    return this.toPageDetail(app, page);
+    this.audit.record({
+      user,
+      type: AuditType.SAVE,
+      resource: AuditResource.PAGE,
+      action: 'save_page_detail',
+      targetId: page.id,
+      targetName: page.name,
+      summary: `保存页面「${page.name}」（应用 ${appId}）`,
+    });
+    const result = this.toPageDetail(app, page);
+    this.collabEvents.publishPageUpdated({
+      type: 'page-updated',
+      appId: app.appId,
+      pageId: page.id,
+      revision: result.revision,
+      updatedAt: result.updatedAt,
+      updatedBy: user.sub,
+      updatedByPhone: user.phone,
+    });
+    return result;
   }
 
   async deletePage(
@@ -87,6 +146,7 @@ export class LowcodePagesService {
       throw new BadRequestException('至少保留一个页面');
     }
     const page = await this.findPageOrThrow(appId, pageId);
+    const pageName = page.name;
     await this.pageRepo.remove(page);
 
     const remaining = pages.filter((p) => p.id !== pageId);
@@ -95,6 +155,15 @@ export class LowcodePagesService {
     }
     await this.pageRepo.save(remaining);
     await this.syncDraft(app, remaining);
+    this.audit.record({
+      user,
+      type: AuditType.DELETE,
+      resource: AuditResource.PAGE,
+      action: 'delete_page',
+      targetId: pageId,
+      targetName: pageName,
+      summary: `删除页面「${pageName}」（应用 ${appId}）`,
+    });
   }
 
   async reorderPages(
@@ -128,6 +197,16 @@ export class LowcodePagesService {
     }
     await this.pageRepo.save(reordered);
     await this.syncDraft(app, reordered);
+
+    this.audit.record({
+      user,
+      type: AuditType.SAVE,
+      resource: AuditResource.PAGE,
+      action: 'reorder_pages',
+      targetId: appId,
+      targetName: app.name,
+      summary: `调整页面排序（应用 ${appId}）`,
+    });
 
     return {
       pages: reordered.map((p) => this.toPageItem(p)),
@@ -169,9 +248,7 @@ export class LowcodePagesService {
     if (!row) {
       throw new NotFoundException('应用不存在');
     }
-    if (row.ownerAccount !== user.phone) {
-      throw new ForbiddenException('无权访问该应用');
-    }
+    await this.projectAccess.assertCanEditContent(user, row);
     return row;
   }
 
@@ -196,6 +273,7 @@ export class LowcodePagesService {
       sortOrder: page.sortOrder,
       createdAt: page.createdAt.toISOString(),
       updatedAt: page.updatedAt.toISOString(),
+      revision: Number(page.revision ?? 0),
       appType: app.primaryLayout,
       detail: page.detail,
     };

@@ -45,6 +45,9 @@ export class AppHttpRequest {
   @Column({ type: 'int', default: 5000 })
   frequencyMs: number;
 
+  @Column({ type: 'boolean', default: true })
+  autoRequest: boolean;
+
   @Column({
     type: 'enum',
     enum: HttpRequestStatus,

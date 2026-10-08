@@ -8,6 +8,10 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { AuthPayload } from '../auth/auth.service';
 import { MinioService } from './minio.service';
+import { AccessScopeService } from '../tenants/access-scope.service';
+import { AuditService } from '../audit/audit.service';
+import { AuditResource } from '../audit/audit-resource.enum';
+import { AuditType } from '../audit/audit-type.enum';
 
 export interface UploadedObjectInfo {
   key: string;
@@ -45,6 +49,8 @@ export class StorageService {
   constructor(
     private readonly minio: MinioService,
     private readonly config: ConfigService,
+    private readonly accessScope: AccessScopeService,
+    private readonly audit: AuditService,
   ) {
     this.maxUploadBytes = parseInt(
       this.config.get<string>('MINIO_MAX_UPLOAD_BYTES', String(100 * 1024 * 1024)),
@@ -69,13 +75,24 @@ export class StorageService {
       );
     }
 
-    const key = this.buildObjectKey(user.phone, file.originalname, folder);
+    const ownerKey = this.accessScope.resourceOwnerKey(user);
+    const key = this.buildObjectKey(ownerKey, file.originalname, folder);
     const mimeType = file.mimetype || 'application/octet-stream';
 
     await this.minio.uploadObject(key, file.buffer, file.size, {
       'Content-Type': mimeType,
       'X-Amz-Meta-Original-Name': encodeURIComponent(file.originalname),
-      'X-Amz-Meta-Owner-Account': user.phone,
+      'X-Amz-Meta-Owner-Account': ownerKey,
+    });
+
+    this.audit.record({
+      user,
+      type: AuditType.SAVE,
+      resource: AuditResource.STORAGE,
+      action: 'upload_file',
+      targetId: key,
+      targetName: file.originalname,
+      summary: `上传文件「${file.originalname}」`,
     });
 
     return this.buildObjectInfo(key, file.size, mimeType, file.originalname);
@@ -83,7 +100,7 @@ export class StorageService {
 
   async getAccessUrl(user: AuthPayload, key: string): Promise<{ url: string; expiresIn?: number }> {
     this.ensureReady();
-    this.assertOwnedKey(user.phone, key);
+    this.assertOwnedKey(this.accessScope.resourceOwnerKey(user), key);
 
     if (this.usePublicUrl) {
       return { url: this.minio.buildPublicUrl(key) };
@@ -96,8 +113,17 @@ export class StorageService {
 
   async remove(user: AuthPayload, key: string): Promise<void> {
     this.ensureReady();
-    this.assertOwnedKey(user.phone, key);
+    this.assertOwnedKey(this.accessScope.resourceOwnerKey(user), key);
     await this.minio.removeObject(key);
+    this.audit.record({
+      user,
+      type: AuditType.DELETE,
+      resource: AuditResource.STORAGE,
+      action: 'delete_file',
+      targetId: key,
+      targetName: key.split('/').pop() || key,
+      summary: `删除文件「${key.split('/').pop() || key}」`,
+    });
   }
 
   async list(
@@ -110,7 +136,7 @@ export class StorageService {
 
     const safePage = Math.max(1, page);
     const safeSize = Math.min(100, Math.max(1, pageSize));
-    const prefix = this.buildListPrefix(user.phone, folder);
+    const prefix = this.buildListPrefix(this.accessScope.resourceOwnerKey(user), folder);
 
     const objects = (await this.minio.listObjects(prefix)).filter(
       (item) => item.name && !item.name.endsWith('/.keep'),

@@ -33,12 +33,23 @@ export class PlatformComponentsController {
     return this.service.listMarket(user);
   }
 
+  @Get('withdrawn')
+  withdrawn(@CurrentUser() user: AuthPayload) { return this.service.listWithdrawn(user); }
+
   @Get('market/scope/:scope')
   listMarketScope(
     @CurrentUser() user: AuthPayload,
     @Param('scope') scope: string,
   ) {
     return this.service.listMarketScope(user, scope);
+  }
+
+  @Get('market/:id/versions')
+  listMarketVersions(
+    @CurrentUser() user: AuthPayload,
+    @Param('id') id: string,
+  ) {
+    return this.service.listMarketVersions(user, id);
   }
 
   @Post('market/:id/use')
@@ -77,13 +88,34 @@ export class PlatformComponentsController {
     @Param('id') id: string,
     @Body() dto: PublishComponentDto,
   ) {
-    return this.service.publish(user, id, dto.visibility);
+    return this.service.publish(user, id, dto.visibility, dto.categoryId);
   }
+
+  @Get('official-categories')
+  categories() { return this.service.listOfficialCategories(); }
+  @Post('official-categories')
+  createCategory(@CurrentUser() user: AuthPayload, @Body() body: { name?: string }) { return this.service.createOfficialCategory(user, body.name); }
+  @Put('official-categories/:categoryId')
+  updateCategory(@CurrentUser() user: AuthPayload, @Param('categoryId') categoryId: string, @Body() body: { name?: string }) { return this.service.updateOfficialCategory(user, categoryId, body.name); }
+  @Delete('official-categories/:categoryId')
+  removeCategory(@CurrentUser() user: AuthPayload, @Param('categoryId') categoryId: string) { return this.service.removeOfficialCategory(user, categoryId); }
 
   @Post(':id/unpublish')
   unpublish(@CurrentUser() user: AuthPayload, @Param('id') id: string) {
     return this.service.unpublish(user, id);
   }
+
+  @Post(':id/withdraw')
+  withdraw(@CurrentUser() user: AuthPayload, @Param('id') id: string, @Body() body: { reason?: string }) {
+    return this.service.withdraw(user, id, body.reason);
+  }
+
+  @Post(':id/restore')
+  restore(@CurrentUser() user: AuthPayload, @Param('id') id: string) { return this.service.restore(user, id); }
+
+  @Delete(':id/permanent')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  permanentDelete(@CurrentUser() user: AuthPayload, @Param('id') id: string) { return this.service.deleteWithdrawn(user, id); }
 
   @Patch(':id/status')
   status(

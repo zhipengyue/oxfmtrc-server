@@ -13,6 +13,7 @@ export function toDataSourceJson(row: AppHttpRequest): Record<string, unknown> {
     ...(row.mqttMode ? { mqttMode: row.mqttMode } : {}),
     ...(row.wsMode ? { wsMode: row.wsMode } : {}),
     status: row.status ?? HttpRequestStatus.ENABLED,
+    autoRequest: row.autoRequest,
     frequencyMs: row.frequencyMs,
     paramsFn: row.paramsFn ?? '',
     headersFn: row.headersFn ?? '',

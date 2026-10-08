@@ -1,10 +1,11 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
-import { MockDeviceWsServer } from './mockapi/mock-device-ws.server';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.useBodyParser('json', { limit: '10mb' });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -15,6 +16,5 @@ async function bootstrap() {
   );
   const port = process.env.PORT ?? 3005;
   await app.listen(port);
-  app.get(MockDeviceWsServer).attach(app.getHttpServer());
 }
 bootstrap();

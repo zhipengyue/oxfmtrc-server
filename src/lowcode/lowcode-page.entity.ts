@@ -24,6 +24,10 @@ export class LowcodePage {
   @Column({ type: 'json' })
   detail: Record<string, unknown>;
 
+  /** 乐观锁版本：每次成功保存 +1，用于多人同页冲突检测 */
+  @Column({ type: 'int', default: 0 })
+  revision: number;
+
   @CreateDateColumn({ type: 'datetime' })
   createdAt: Date;
 

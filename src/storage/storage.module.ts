@@ -4,9 +4,16 @@ import { MaterialCategoriesModule } from '../material-categories/material-catego
 import { MinioService } from './minio.service';
 import { StorageController } from './storage.controller';
 import { StorageService } from './storage.service';
+import { OrganizationModule } from '../tenants/organization.module';
+import { AuditModule } from '../audit/audit.module';
 
 @Module({
-  imports: [AuthModule, forwardRef(() => MaterialCategoriesModule)],
+  imports: [
+    AuthModule,
+    OrganizationModule,
+    AuditModule,
+    forwardRef(() => MaterialCategoriesModule),
+  ],
   controllers: [StorageController],
   providers: [MinioService, StorageService],
   exports: [StorageService, MinioService],
